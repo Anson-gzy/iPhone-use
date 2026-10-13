@@ -28,7 +28,7 @@ ERRORS = frozenset((
     "invalid_selector", "mirroring_conflict", "newline_requires_intent", "newline_unsafe",
     "no_focused_field", "no_scroll_progress", "no_such_element", "not_editable", "not_ready",
     "occluded_target", "offscreen_target", "phone_locked", "postcondition_failed", "preview_paused",
-    "pua_foreground_unavailable", "pua_recovery_required", "pua_unreachable", "response_too_large",
+    "pua_foreground_unavailable", "pua_recovery_required", "pua_timeout", "pua_transport_error", "pua_unreachable", "response_too_large",
     "scroll_context_changed", "search_exhausted", "stale_observation", "unknown_tool", "internal_error"))
 ENUMS = {
     "tool_name": TOOLS,

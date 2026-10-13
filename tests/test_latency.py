@@ -546,48 +546,53 @@ class ViewportCacheTests(PhoneCase):
 
 
 class SettleTests(PhoneCase):
-    def test_post_action_tree_read_waits_for_the_transition_then_restores_speed(self):
-        self.phone.settle_seconds = 0.5
-        self.phone.tap(selector={"label": "Target"}, observe="tree")
-        paths = self.paths()
-        source = next(i for i, path in enumerate(paths) if path.startswith("/source"))
-        toggles = [i for i, path in enumerate(paths) if path == "/appium/settings"]
-        self.assertEqual(len(toggles), 2)
-        self.assertLess(toggles[0], source)
-        self.assertGreater(toggles[1], source)
-        self.assertEqual(self.client.settings, [{"animationCoolOffTimeout": 0.5}, {"animationCoolOffTimeout": 0}])
-
-    def test_other_reads_and_the_default_do_not_toggle_settings(self):
-        self.phone.tap(selector={"label": "Target"}, observe="tree")
-        self.phone.settle_seconds = 0.5
-        self.phone.observe()
-        self.phone.tap(x=10, y=10, observe="screenshot")
-        self.phone.tap(x=10, y=10)
+    def test_post_action_observations_settle_on_the_host_without_settings(self):
+        for mode in ("tree", "both", "screenshot"):
+            for seconds in (0.2, 0.5, 0.8):
+                with self.subTest(mode=mode, seconds=seconds):
+                    self.client.calls.clear()
+                    self.phone.settle_seconds = seconds
+                    with patch("wda_controller.time.sleep") as sleep:
+                        result = self.phone.tap(selector={"label": "Target"}, observe=mode)
+                    sleep.assert_called_once_with(min(seconds, 0.5))
+                    self.assertTrue(result["action_complete"])
+                    self.assertIn("observation", result)
+                    self.assertNotIn("/appium/settings", self.paths())
         self.assertEqual(self.client.settings, [])
 
-    def test_failed_toggle_never_fails_the_action_and_restores_settings_later(self):
+    def test_direct_observations_and_none_do_not_settle(self):
         self.phone.settle_seconds = 0.5
-        original = self.client.session
-        restored = []
-        self.client.reapply_settings = lambda: restored.append(True)
+        with patch("wda_controller.time.sleep") as sleep:
+            self.phone.observe("tree")
+            self.phone.observe("both")
+            self.phone.observe("screenshot")
+            self.phone.tap(selector={"label": "Target"})
+        sleep.assert_not_called()
+        self.assertEqual(self.client.settings, [])
 
-        def session(method, path, payload=None, timeout=None):
-            if path == "/appium/settings":
-                raise WDAError("action_uncertain", "Settings response lost", uncertain=True)
-            return original(method, path, payload, timeout)
+    def test_zero_settle_skips_host_wait_for_every_observation_mode(self):
+        with patch("wda_controller.time.sleep") as sleep:
+            for mode in ("tree", "both", "screenshot"):
+                self.phone.tap(selector={"label": "Target"}, observe=mode)
+        sleep.assert_not_called()
+        self.assertEqual(self.client.settings, [])
 
-        with patch.object(self.client, "session", side_effect=session):
-            result = self.phone.tap(selector={"label": "Target"}, observe="tree")
-        self.assertTrue(result["action_complete"])
-        self.assertIn("nodes", result["observation"])
-        self.assertEqual(restored, [True])
-
-    def test_speed_is_restored_when_the_read_fails(self):
+    def test_failed_source_adds_no_cleanup_request_or_settings_reapply(self):
         self.phone.settle_seconds = 0.5
-        with patch.object(self.client, "source", side_effect=WDAError("pua_unreachable", "read lost")):
-            error = self.assert_code("pua_unreachable", lambda: self.phone.tap(selector={"label": "Target"}, observe="tree"))
-        self.assertTrue(error.details["action_executed"])
-        self.assertEqual(self.client.settings[-1], {"animationCoolOffTimeout": 0})
+        for mode in ("tree", "both"):
+            for code in ("pua_timeout", "pua_unreachable"):
+                with self.subTest(mode=mode, code=code):
+                    self.client.calls.clear()
+                    with patch.object(self.client, "source", side_effect=WDAError(code, "read lost")), \
+                            patch.object(self.client, "reapply_settings") as reapply, \
+                            patch("wda_controller.time.sleep") as sleep:
+                        error = self.assert_code(code, lambda: self.phone.tap(selector={"label": "Target"}, observe=mode))
+                    self.assertTrue(error.details["action_executed"])
+                    self.assertFalse(error.details["action_complete"])
+                    sleep.assert_called_once_with(0.5)
+                    reapply.assert_not_called()
+                    self.assertTrue(self.paths()[-1].startswith("/source"))
+                    self.assertNotIn("/appium/settings", self.paths())
 
 
 @unittest.skipUnless(os.access(wda_image.SIPS, os.X_OK), "screenshot scaling uses macOS sips")

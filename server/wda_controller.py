@@ -160,10 +160,11 @@ class PhoneController:
         self._deadline=None
         self.pending_input=None
         self.last_target=None
+        self.snapshot_restore=None
         self.typing_frequency=TYPING_FREQUENCY
         self.typing_piece=TYPING_PIECE
         self.call_budget=CALL_BUDGET
-        # Seconds WDA may wait for animations before a post-action tree read; 0 reads at once.
+        # Bounded host-side transition delay; never enable XCTest's idle wait.
         self.settle_seconds=0
 
     def external_action(self):
@@ -285,17 +286,50 @@ class PhoneController:
             self.snapshots.popitem(last=False)
         return ident
 
-    def observe(self,mode="tree",include_invisible=False,max_nodes=100,expensive_visibility=False):
+    def bounded_tree(self,include_invisible,expensive_visibility,limits):
+        saved=self.client.session("GET","/appium/settings")
+        if not isinstance(saved,dict) or any(not isinstance(saved.get(key),int) or isinstance(saved.get(key),bool) or saved[key]<1 for key in limits):
+            fail("invalid_response","PUA does not expose the requested native snapshot settings.",action_executed=False)
+        restore={key:saved[key] for key in limits}
+        if self.snapshot_restore:self.snapshot_restore(restore)
+        operation="snapshot_settings_apply"
+        try:
+            self.client.session("POST","/appium/settings",{"settings":limits})
+            operation="snapshot_read"
+            result=self.tree(include_invisible,expensive_visibility)
+            operation="snapshot_settings_restore"
+            self.client.session("POST","/appium/settings",{"settings":restore})
+        except BaseException as error:
+            # The native request may still be queued. Do not add another deadline
+            # of synchronous cleanup to the failing read; restore on the next call.
+            self.client.reapply_settings(restore)
+            if isinstance(error,WDAError) and operation!="snapshot_read":
+                error.details.update(action_executed=False,operation=operation)
+            raise
+        if self.snapshot_restore:self.snapshot_restore({})
+        return result
+
+    def observe(self,mode="tree",include_invisible=False,max_nodes=100,expensive_visibility=False,snapshot_max_depth=None,snapshot_max_children=None):
         if mode not in ("tree","screenshot","both"):
             fail("invalid_argument","mode must be tree, screenshot or both.")
         integer(max_nodes,"max_nodes",1,500)
+        limits={}
+        for value,key,maximum in ((snapshot_max_depth,"snapshotMaxDepth",100),(snapshot_max_children,"snapshotMaxChildren",500)):
+            if value is not None:limits[key]=integer(value,key,1,maximum)
+        if limits and mode=="screenshot":
+            fail("invalid_argument","Snapshot limits require tree or both mode.",action_executed=False)
         if mode=="screenshot":
             app=self.active_app()
             nodes,viewport=[],self.viewport(VIEWPORT_TTL)
         else:
-            nodes,viewport=self.tree(include_invisible,expensive_visibility)
+            nodes,viewport=(self.bounded_tree(include_invisible,expensive_visibility,limits) if limits
+                            else self.tree(include_invisible,expensive_visibility))
             app=self._source_app or self.active_app()
-        return self.observation_from_state(nodes,viewport,app,mode,max_nodes,expensive_visibility)
+        result=self.observation_from_state(nodes,viewport,app,mode,max_nodes,expensive_visibility)
+        if limits:
+            result.update(snapshot_limits=limits,tree_complete=False,truncated=True,total_nodes_scope="bounded_snapshot")
+            result.setdefault("warnings",[]).append("Native depth/child limits apply before snapshot creation, not by visible area. Controls or visible rows may be omitted; missing nodes do not prove absence or list completeness. Inspect a screenshot.")
+        return result
 
     def observation_from_state(self,nodes,viewport,app,mode,max_nodes=100,expensive_visibility=False):
         result={"observation_id":self.remember(nodes,viewport,app,has_tree=mode!="screenshot"),
@@ -519,24 +553,11 @@ class PhoneController:
                 fail("postcondition_failed","Expected target did not appear within the wait budget.",polls=attempts)
             time.sleep(min(0.25,max(0,deadline-time.monotonic())))
 
-    def cool_off(self,seconds):
-        try:
-            self.client.session("POST","/appium/settings",{"settings":{"animationCoolOffTimeout":seconds}})
-            return True
-        except WDAError:
-            # The read continues without the wait; the next command sends the fast settings again.
-            self.client.reapply_settings()
-            return False
-
     def observe_after(self,mode,max_nodes=100):
-        """Post-action observation. A tree read may let PUA wait for the transition to end first."""
-        if self.settle_seconds>0 and mode=="screenshot":
-            # A screenshot has no such wait in WDA; give the transition a moment instead.
+        """Allow a short transition without entering XCTest's unbounded idle path."""
+        if self.settle_seconds>0 and mode in ("tree","both","screenshot"):
             time.sleep(min(self.settle_seconds,0.5))
-        if self.settle_seconds<=0 or mode not in ("tree","both") or not self.cool_off(self.settle_seconds):
-            return self.observe(mode,max_nodes=max_nodes)
-        try:return self.observe(mode,max_nodes=max_nodes)
-        finally:self.cool_off(0)
+        return self.observe(mode,max_nodes=max_nodes)
 
     def after(self,expect=None,observe="none",max_nodes=100):
         result={"action_executed":True,"action_complete":True,"verified":False,"verification_deferred":True}
