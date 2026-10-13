@@ -117,7 +117,7 @@ test('connects before requesting only fullscreen, then polls only the app frame 
 
 test('preserves full frame aspect ratio and maps gestures using the point viewport', async () => {
   const h = await harness();
-  h.app.ontoolresult({ structuredContent: preview({ frame: frame(12), viewport: { width: 400, height: 800 }, busy: true,
+  h.app.ontoolresult({ structuredContent: preview({ frame: frame(12), device: { model: 'iPhone 17 Pro Max' }, viewport: { width: 400, height: 800 }, busy: true,
     events: [{ id: 1, kind: 'tap', at: 1000, point: { x: 100, y: 200 }, viewport: { width: 400, height: 800 } }] }) });
   assert.equal(h.elements.app.dataset.frameSeq, '12');
   assert.equal(h.elements.app.dataset.busy, 'true');
@@ -237,6 +237,7 @@ test('operation glow survives tool gaps, hidden panels and temporary missing fra
 
 test('fits the entire chassis in narrow and landscape panels while preserving image coordinates', async () => {
   const h = await harness();
+  h.app.ontoolresult({ structuredContent: preview({ device: { model: 'iPhone 17 Pro Max' } }) });
   let seq = 0;
   for (const [panelWidth, panelHeight, imageWidth, imageHeight] of [[170, 450, 440, 956], [900, 270, 956, 440], [310, 140, 440, 956]]) {
     h.stageSize.width = panelWidth - 24;
@@ -274,14 +275,15 @@ test('a hidden panel stops polling, and slow calls never overlap', async () => {
   assert.equal(h.calls.length, 2);
 });
 
-test('paused clears the screen, errors back off silently, teardown cancels work', async () => {
+test('paused overlays the retained screen, errors back off silently, teardown clears it', async () => {
   const h = await harness({ reply: async () => ({ isError: true }) });
   h.app.ontoolresult({ structuredContent: preview({ frame: frame(4), busy: true }) });
   h.app.ontoolresult({ structuredContent: preview({ paused: true }) });
   assert.equal(h.elements.screen.hidden, false);
-  assert.equal(h.elements.image.hidden, true);
-  assert.equal(h.elements['empty-state-text'].textContent, '预览已暂停');
-  assert.equal(h.elements.image.src, undefined);
+  assert.equal(h.elements.image.hidden, false);
+  assert.equal(h.elements['empty-state-text'].textContent, '请在手机上接管操作');
+  assert.equal(h.elements.image.src, 'data:image/png;base64,test-image-only');
+  assert.equal(h.elements['empty-state'].hidden, false);
   assert.equal(h.elements.app.dataset.busy, 'false');
   assert.equal(h.elements.device.hidden, false);
   assert.equal(h.elements.app.dataset.operating, 'false');
@@ -295,6 +297,7 @@ test('paused clears the screen, errors back off silently, teardown cancels work'
   assert.equal(h.timers.size, 0);
   assert.equal(h.resize.disconnected, true);
   assert.equal(h.elements.screen.hidden, true);
+  assert.equal(h.elements.image.src, undefined);
 });
 
 test('reduced motion shows a stationary cursor and old gestures are not replayed', async () => {
@@ -458,10 +461,10 @@ test('empty screen explains connecting, offline, locked, authentication and paus
   assert.equal(h.elements['empty-state-text'].textContent, '正在连接');
   for (const [fields, state, label] of [
     [{ frame_available: false, service_ready: false }, 'offline', '未连接'],
-    [{ paused: true, pause_reason: 'device_locked' }, 'locked', '等待解锁'],
-    [{ paused: true, pause_reason: 'authentication' }, 'authentication', '请完成认证'],
-    [{ paused: true, pause_reason: 'unknown' }, 'paused', '预览已暂停'],
-    [{ paused: true }, 'paused', '预览已暂停'],
+    [{ paused: true, pause_reason: 'device_locked' }, 'locked', '请在手机上接管操作'],
+    [{ paused: true, pause_reason: 'authentication' }, 'authentication', '请在手机上接管操作'],
+    [{ paused: true, pause_reason: 'unknown' }, 'paused', '请在手机上接管操作'],
+    [{ paused: true }, 'paused', '请在手机上接管操作'],
   ]) {
     h.app.ontoolresult({ structuredContent: preview(fields) });
     assert.equal(h.elements['empty-state'].dataset.state, state);
@@ -473,7 +476,7 @@ test('empty screen explains connecting, offline, locked, authentication and paus
   assert.equal(h.elements['empty-state'].hidden, true);
 });
 
-test('failed reconnect restores the authentication symbol and keeps phone controls disabled', async () => {
+test('failed reconnect preserves the handoff prompt and keeps phone controls disabled', async () => {
   let release;
   const h = await harness({ reply: params => params.name === 'pua_screen_action'
     ? new Promise(resolve => { release = resolve; })
@@ -481,11 +484,11 @@ test('failed reconnect restores the authentication symbol and keeps phone contro
   h.app.ontoolresult({ structuredContent: preview({ paused: true, pause_reason: 'authentication' }) });
   h.elements['tool-refresh'].click();
   await flush();
-  assert.equal(h.elements['empty-state'].dataset.state, 'connecting');
+  assert.equal(h.elements['empty-state'].dataset.state, 'authentication');
   release({ isError: true, structuredContent: { error: { code: 'pua_unreachable' } } });
   await flush();
   assert.equal(h.elements['empty-state'].dataset.state, 'authentication');
-  assert.equal(h.elements['empty-state-text'].textContent, '请完成认证');
+  assert.equal(h.elements['empty-state-text'].textContent, '请在手机上接管操作');
   assert.equal(h.elements['tool-home'].disabled, true);
   assert.equal(h.elements['tool-screenshot'].disabled, true);
 });
@@ -501,7 +504,7 @@ test('first image decode failure explains unavailable picture in the chassis', a
   assert.equal(h.elements['empty-state'].hidden, false);
 });
 
-test('decode failure restores the last loaded image, while authentication pause erases its backup', async () => {
+test('decode failure restores the last loaded image and a handoff retains it', async () => {
   const h = await harness();
   h.app.ontoolresult({ structuredContent: preview({ frame: frame(6) }) });
   h.elements.image.onload();
@@ -514,7 +517,7 @@ test('decode failure restores the last loaded image, while authentication pause 
   assert.equal(h.calls[0].arguments.after_seq, 0);
   h.app.ontoolresult({ structuredContent: preview({ paused: true }) });
   h.elements.image.onerror();
-  assert.equal(h.elements.image.src, undefined);
+  assert.equal(h.elements.image.src, previous);
   assert.equal(h.elements.screen.hidden, false);
   assert.equal(h.elements['empty-state'].hidden, false);
 });
@@ -531,21 +534,160 @@ test('unavailable and paused previews poll slowly, and focus wakes recovery imme
   assert.equal(h.timers.size, 0);
 });
 
-test('a frame requested before authentication pause cannot restore cleared pixels', async () => {
+test('a frame requested before authentication pause cannot replace the frozen page or remove its overlay', async () => {
   let resolve;
   const h = await harness({ reply: () => new Promise(done => { resolve = done; }) });
   h.app.ontoolresult({ structuredContent: preview({ frame: frame(4) }) });
+  const source = h.elements.image.src;
   await h.tick();
   h.app.ontoolresult({ structuredContent: preview({ paused: true }) });
-  resolve({ structuredContent: preview({ frame: frame(5), paused: false }) });
+  resolve({ structuredContent: preview({ frame: { ...frame(5), data: 'late-frame' }, paused: false }) });
   await flush();
-  assert.equal(h.elements.image.src, undefined);
+  assert.equal(h.elements.image.src, source);
+  assert.equal(h.elements.app.dataset.live, 'paused');
   assert.equal(h.elements.screen.hidden, false);
   assert.equal(h.elements['empty-state'].hidden, false);
   await h.tick();
+  assert.equal(h.calls.at(-1).arguments.after_seq, 0);
   resolve({ structuredContent: preview({ frame: frame(6), paused: false }) });
   await flush();
   assert.equal(h.elements.screen.hidden, false);
+  assert.equal(h.elements['empty-state'].hidden, true);
+});
+
+test('each handoff reason retains the page geometry and ignores incoming frames and gestures while paused', async () => {
+  for (const pause_reason of ['device_locked', 'authentication', 'unknown']) {
+    const h = await harness();
+    h.app.ontoolresult({ structuredContent: preview({ frame: { ...frame(4), width: 1800, height: 900 },
+      device: { model: 'iPhone 15 Pro' }, viewport: { width: 800, height: 400 } }) });
+    h.elements.image.onload();
+    const source = h.elements.image.src;
+    const size = [h.elements.device.style.width, h.elements.device.style.height];
+    for (let i = 0; i < 3; i++) {
+      h.app.ontoolresult({ structuredContent: preview({ paused: true, pause_reason, frame_available: false,
+        frame: { ...frame(5), data: 'ignored-frame' }, events: [
+          { id: i + 1, kind: 'tap', at: 1000, point: { x: 200, y: 100 } },
+        ] }) });
+      assert.equal(h.elements.image.src, source, pause_reason);
+      assert.equal(h.elements.image.hidden, false, pause_reason);
+      assert.equal(h.elements.device.dataset.orientation, 'landscape', pause_reason);
+      assert.deepEqual([h.elements.device.style.width, h.elements.device.style.height], size);
+      assert.equal(h.elements['empty-state'].hidden, false, pause_reason);
+      assert.equal(h.elements['empty-state-text'].textContent, '请在手机上接管操作', pause_reason);
+      assert.equal(h.elements.cursor.hidden, true, pause_reason);
+      assert.equal(h.elements['tool-home'].disabled, true, pause_reason);
+      assert.equal(h.elements['tool-screenshot'].disabled, true, pause_reason);
+    }
+  }
+});
+
+test('resuming removes the overlay but frozen pixels cannot send input before a new frame decodes', async () => {
+  const h = await livePointerHarness();
+  const source = h.elements.image.src;
+  h.pointer('pointerdown', 60, 120);
+  h.app.ontoolresult({ structuredContent: preview({ paused: true, pause_reason: 'authentication' }) });
+  assert.equal(h.elements.screen.captured, undefined);
+  h.pointer('pointerup', 60, 120);
+  h.app.ontoolresult({ structuredContent: preview({ paused: false, frame_available: false }) });
+  assert.equal(h.elements.app.dataset.live, 'connecting');
+  assert.equal(h.elements['empty-state'].hidden, true);
+  assert.equal(h.elements.image.src, source);
+  h.app.ontoolresult({ structuredContent: preview({ frame_available: true }) });
+  h.elements.image.onload(); // A late load from the frozen frame is stale.
+  h.pointer('pointerdown', 60, 120); h.pointer('pointerup', 60, 120);
+  await flush();
+  assert.equal(h.calls.filter(c => c.name === 'pua_screen_action').length, 0);
+  h.app.ontoolresult({ structuredContent: preview({ frame: frame(1), frame_available: true }) });
+  h.elements.image.onload();
+  h.pointer('pointerdown', 60, 120); h.pointer('pointerup', 60, 120);
+  await flush();
+  assert.equal(h.calls.filter(c => c.name === 'pua_screen_action').length, 1);
+});
+
+test('only confirmed Dynamic Island models show the island', async () => {
+  const h = await harness();
+  for (const model of ['iPhone 14 Pro', 'iPhone 14 Pro Max', 'iPhone 15', 'iPhone 15 Plus', 'iPhone 15 Pro', 'iPhone 15 Pro Max',
+    'iPhone 16', 'iPhone 16 Plus', 'iPhone 16 Pro', 'iPhone 16 Pro Max', 'iPhone 17', 'iPhone 17 Pro', 'iPhone 17 Pro Max',
+    'iPhone Air', 'iPhone 18 Pro', 'iPhone 18 Pro Max', '  IPHONE  15 PRO  ']) {
+    h.app.ontoolresult({ structuredContent: preview({ device: { model } }) });
+    assert.equal(h.elements.device.dataset.appearance, 'dynamic-island', model);
+    assert.ok(parseFloat(h.elements.device.style['--bezel']) > 0, model);
+    assert.ok(parseFloat(h.elements.device.style['--screen-radius']) > 0, model);
+  }
+});
+
+test('notch models keep the rounded frame without a Dynamic Island', async () => {
+  const h = await harness();
+  for (const model of ['iPhone X', 'iPhone XR', 'iPhone XS', 'iPhone XS Max', 'iPhone 11', 'iPhone 11 Pro', 'iPhone 11 Pro Max',
+    'iPhone 12', 'iPhone 12 mini', 'iPhone 12 Pro', 'iPhone 12 Pro Max', 'iPhone 13', 'iPhone 13 mini', 'iPhone 13 Pro',
+    'iPhone 13 Pro Max', 'iPhone 14', 'iPhone 14 Plus', 'iPhone 16e', 'iPhone 17e']) {
+    h.app.ontoolresult({ structuredContent: preview({ device: { model } }) });
+    assert.equal(h.elements.device.dataset.appearance, 'rounded', model);
+    assert.ok(parseFloat(h.elements.device.style['--bezel']) > 0, model);
+    assert.ok(parseFloat(h.elements.device.style['--screen-radius']) > 0, model);
+  }
+});
+
+test('older phones, every SE and unrecognized models use a rectangular screen with no chassis', async () => {
+  const h = await harness();
+  assert.equal(h.elements.device.dataset.appearance, 'plain');
+  for (const model of ['iPhone', 'iPhone 3GS', 'iPhone 4S', 'iPhone 5', 'iPhone 5c', 'iPhone 5s', 'iPhone 6', 'iPhone 6 Plus',
+    'iPhone 6s', 'iPhone 6s Plus', 'iPhone 7', 'iPhone 7 Plus', 'iPhone 8', 'iPhone 8 Plus', 'iPhone SE',
+    'iPhone SE (2nd generation)', 'iPhone SE (3rd generation)', 'iPad Pro', 'iPhone 99 Pro', 'iPhone17,3']) {
+    // Switch from a known island phone to ensure fallback also removes its decoration.
+    h.app.ontoolresult({ structuredContent: preview({ device: { model: 'iPhone 15 Pro' } }) });
+    h.app.ontoolresult({ structuredContent: preview({ device: { model } }) });
+    assert.equal(h.elements.device.dataset.appearance, 'plain', model);
+    assert.equal(h.elements.device.style['--bezel'], '0px', model);
+    assert.equal(h.elements.device.style['--screen-radius'], '0px', model);
+    const mask = decodeURIComponent(h.elements.device.style['--glow-mask']);
+    assert.ok(mask.includes("rx='0'"), model);
+    assert.ok(!mask.includes("stroke-width='0'"), 'Operation feedback stays visible on plain screens');
+  }
+});
+
+test('plain portrait and landscape screens preserve the complete frame and gesture coordinates', async () => {
+  const h = await harness();
+  let seq = 0;
+  for (const [width, height] of [[750, 1334], [1334, 750]]) {
+    h.app.ontoolresult({ structuredContent: preview({ device: { model: 'iPhone 8' }, frame: { ...frame(++seq), width, height },
+      viewport: { width: width / 2, height: height / 2 }, events: [
+        { id: seq, kind: 'tap', at: 1000, point: { x: width / 8, y: height / 4 } },
+      ] }) });
+    const displayWidth = parseFloat(h.elements.device.style.width);
+    const displayHeight = parseFloat(h.elements.device.style.height);
+    assert.ok(Math.abs(displayWidth / displayHeight - width / height) < 1e-8);
+    assert.ok(displayWidth <= h.stageSize.width && displayHeight <= h.stageSize.height);
+    assert.equal(h.elements.cursor.style.left, '25%');
+    assert.equal(h.elements.cursor.style.top, '50%');
+    assert.equal(h.elements.device.dataset.orientation, width > height ? 'landscape' : 'portrait');
+  }
+});
+
+test('late model metadata refits the current frame, survives pauses and resets for a replacement stream', async () => {
+  const h = await harness();
+  h.app.ontoolresult({ structuredContent: preview({ stream_id: 'first', frame: frame(1) }) });
+  const source = h.elements.image.src;
+  const initialLayouts = h.layoutReads;
+  h.app.ontoolresult({ structuredContent: preview({ device: { model: 'iPhone 15 Pro' } }) });
+  assert.equal(h.elements.device.dataset.appearance, 'dynamic-island');
+  assert.equal(h.layoutReads, initialLayouts + 1);
+  assert.equal(h.elements.image.src, source);
+  for (const device of [{ model: 'iPhone 15 Pro' }, null, undefined]) {
+    h.app.ontoolresult({ structuredContent: preview({ device }) });
+    assert.equal(h.elements.device.dataset.appearance, 'dynamic-island');
+  }
+  assert.equal(h.layoutReads, initialLayouts + 1);
+  h.app.ontoolresult({ structuredContent: preview({ paused: true }) });
+  assert.equal(h.elements.device.dataset.appearance, 'dynamic-island');
+  h.app.ontoolresult({ structuredContent: preview({ stream_id: 'second', frame: frame(1), device: null }) });
+  assert.equal(h.elements.model.textContent, 'iPhone');
+  assert.equal(h.elements.device.dataset.appearance, 'plain');
+  h.app.ontoolresult({ structuredContent: preview({ device: { model: 'iPhone 14' } }) });
+  assert.equal(h.elements.device.dataset.appearance, 'rounded');
+  h.app.ontoolresult({ structuredContent: preview({ stream_id: 'third', device: { model: 'iPhone 15' } }) });
+  assert.equal(h.elements.model.textContent, 'iPhone 15');
+  assert.equal(h.elements.device.dataset.appearance, 'dynamic-island');
 });
 
 test('status pill names the phone model and follows the stream state', async () => {
@@ -568,7 +710,7 @@ test('status pill names the phone model and follows the stream state', async () 
   h.app.ontoolresult({ structuredContent: preview({ paused: true, pause_reason: 'device_locked' }) });
   assert.equal(h.elements['live-text'].textContent, '等待解锁');
   assert.match(h.elements['live-text'].title, /刷新/);
-  assert.equal(h.elements.image.src, undefined);
+  assert.equal(h.elements.image.src, 'data:image/png;base64,test-image-only');
   h.app.ontoolresult({ structuredContent: preview({ paused: true, pause_reason: 'authentication' }) });
   assert.equal(h.elements['live-text'].textContent, '已暂停');
   h.app.ontoolresult({ structuredContent: preview({ frame: frame(2), frame_available: true }) });

@@ -55,8 +55,8 @@ https://github.com/zhongerxin/iPhone-use
 
 | 宿主 | 在源码目录运行 | 安装后的接入 |
 | --- | --- | --- |
-| [WorkBuddy](workbuddy/README.md) | `python3 workbuddy/install.py` | 在「连接器管理」信任 `iphone_use`，新开会话 |
-| [豆包工作](doubao/README.md) | `python3 doubao/install.py` | 按安装器输出新建 STDIO 连接器，上传两个技能，新开「本地电脑」任务 |
+| [WorkBuddy](https://github.com/zhongerxin/iPhone-use/blob/main/workbuddy/README.md) | `python3 workbuddy/install.py` | 在「连接器管理」信任 `iphone_use`，新开会话 |
+| [豆包工作](https://github.com/zhongerxin/iPhone-use/blob/main/doubao/README.md) | `python3 doubao/install.py` | 按安装器输出新建 STDIO 连接器，上传两个技能，新开「本地电脑」任务 |
 
 将对应提示词发给本机的 WorkBuddy 或豆包工作。助手可执行本地安装；宿主界面的接入步骤若无法自动操作，会说明需要你完成的具体步骤。首次签名仍使用你自己的 Apple 账号和开发团队。
 
@@ -173,9 +173,9 @@ sh scripts/install.sh
 读取这个列表，分段滚动并去重，说明已经覆盖的范围和还未确认的部分。
 ```
 
-输入与提交分开，工具默认不提交文字。模型需要核对关键页面、接收人、数量和最终结果。密码、验证码、Face ID 等认证交给用户完成，接管期间可以暂停预览。
+输入与提交分开，工具默认不提交文字。模型需要核对关键页面、接收人、数量和最终结果。密码、验证码、Face ID 等认证交给用户完成；等待解锁或认证接管时，widget 保留暂停前的画面，叠加黑色半透明遮罩、接管手势图标和「请在手机上接管操作」提示。恢复预览后自动移除遮罩。
 
-屏幕预览在同一聊天中复用已有 widget。支持直接点击实时画面、鼠标拖动和触控板双指滚动／翻页，底部提供刷新、主屏幕和截图按钮；无图像时保留黑色屏幕的 iPhone 外壳，屏幕内仅显示对应状态图标，顶部显示连接或暂停状态。预览供用户观看，模型定位仍以工具返回的实际图像或控件为依据。
+屏幕预览在同一聊天中复用已有 widget。支持直接点击实时画面、鼠标拖动和触控板双指滚动／翻页，底部提供刷新、主屏幕和截图按钮。外观按连接机型匹配：支持灵动岛的机型才显示灵动岛；其他已知圆角屏机型保留圆角和外壳；iPhone X 之前的机型、所有 iPhone SE 和未知机型仅显示无圆角、无外壳的矩形屏幕。无图像时屏幕内仅显示对应状态图标，顶部显示连接或暂停状态。预览供用户观看，模型定位仍以工具返回的实际图像或控件为依据。
 
 ## 技术亮点
 

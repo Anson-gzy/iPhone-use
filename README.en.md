@@ -56,8 +56,8 @@ Both hosts can control a real iPhone over USB and show its live screen in a side
 
 | Host | Run from the source directory | Connect after installation |
 | --- | --- | --- |
-| [WorkBuddy](workbuddy/README.md) | `python3 workbuddy/install.py` | Trust `iphone_use` in Connector Management, then start a new chat |
-| [Doubao Work](doubao/README.md) | `python3 doubao/install.py` | Add a STDIO connector using the installer output, upload both skills, then start a Local Computer task |
+| [WorkBuddy](https://github.com/zhongerxin/iPhone-use/blob/main/workbuddy/README.md) | `python3 workbuddy/install.py` | Trust `iphone_use` in Connector Management, then start a new chat |
+| [Doubao Work](https://github.com/zhongerxin/iPhone-use/blob/main/doubao/README.md) | `python3 doubao/install.py` | Add a STDIO connector using the installer output, upload both skills, then start a Local Computer task |
 
 Paste the matching prompt into the host running on your Mac. The assistant can perform the local installation and explain any host UI steps it cannot complete. First-time signing uses your own Apple account and development team.
 
@@ -179,9 +179,9 @@ Read this list while scrolling with overlap. Deduplicate entries and state the
 covered range and any remaining uncertainty.
 ```
 
-Text input and submission are separate; text is not submitted by default. The model checks key screens, recipients, counts, and final results. Passwords, verification codes, and Face ID are handled by the user; preview can be paused during handoff.
+Text input and submission are separate; text is not submitted by default. The model checks key screens, recipients, counts, and final results. Passwords, verification codes, and Face ID are handled by the user. While waiting for unlock or authentication, the widget retains the last preview beneath a translucent black overlay with a handoff gesture icon and the prompt “请在手机上接管操作” (take over on your phone). The overlay disappears when the preview resumes.
 
-Repeated preview opens in the same chat reuse the existing widget. Its toolbar offers Refresh, Home, and Screenshot. Without an image, the iPhone frame shows a dark screen with a centered status icon; the top badge displays the connection or pause state. The preview is for the user; model decisions use actual tool observations.
+Repeated preview opens in the same chat reuse the existing widget. Its toolbar offers Refresh, Home, and Screenshot. The appearance follows the connected model: only supported models show a Dynamic Island; other known rounded-screen models keep the rounded corners and frame. Pre-iPhone X models, all iPhone SE models, and unrecognized devices use a plain rectangular screen with no chassis. Without an image, the screen shows a centered status icon; the top badge displays the connection or pause state. The preview is for the user; model decisions use actual tool observations.
 
 ## Technical details
 
