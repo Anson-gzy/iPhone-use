@@ -110,6 +110,15 @@ class AnalyticsTests(unittest.TestCase):
         self.assertEqual(tools[2]["error_code"], "other")
         self.assertNotIn("private", json.dumps(self.events))
 
+    def test_transport_error_categories_are_preserved_without_user_content(self):
+        analytics = self.analytics()
+        for code in ("pua_timeout", "pua_transport_error", "pua_unreachable"):
+            analytics.tool_result("pua_observe", {"selector": {"label": "private"}}, None, 3, code)
+        analytics.close()
+        errors = [event["properties"]["error_code"] for event in self.events if event["event"] == "iphone_use_tool_called"]
+        self.assertEqual(errors, ["pua_timeout", "pua_transport_error", "pua_unreachable"])
+        self.assertNotIn("private", json.dumps(self.events))
+
     def test_runtime_and_delivery_failures_preserve_phone_results(self):
         runtime = Runtime(self.directory)
         runtime.analytics = self.analytics(Mock(side_effect=OSError("offline")))

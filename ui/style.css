@@ -86,5 +86,5 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent
 @media(prefers-reduced-motion:reduce){.glow{transition:none}#app[data-operating="true"] .glow,#app[data-operating="true"] .glow i:nth-child(n),#app[data-live="live"] .dot,#toolbar button[data-busy="true"],#toast,#empty-state[data-state="connecting"] [data-icon="connecting"]{animation:none}#toolbar button{transition:none}.gesture-cursor{will-change:opacity}}
 
 /* Keep pointer drags inside the phone from scrolling the host panel. */
-#screen{touch-action:none;overscroll-behavior:contain;cursor:crosshair;pointer-events:auto}
+#screen{touch-action:none;overscroll-behavior:contain;cursor:default;pointer-events:auto}
 #app[data-live="paused"] #screen,#app[data-live="offline"] #screen{cursor:default}

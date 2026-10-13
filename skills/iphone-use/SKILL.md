@@ -31,6 +31,10 @@ App 实际要求密码、PIN、验证码、Face ID / Touch ID，或手机需要�
 
 树的每个节点只保留一份事实：`type` 不带 `XCUIElementType` 前缀，`rect` 是 `[x, y, width, height]`（iPhone 点）；没有 `name` 表示它与 `label` 相同，没有 `value` 表示它与文字相同，没有 `enabled` / `visible` / `in_viewport` 表示为 true。保持 `include_invisible=false`、`max_nodes=200`、`expensive_visibility=false`；只查一个目标用 `pua_find` / `pua_wait`，不重复获取整树。树截断或节点在视口内不能证明内容全量或目标未被遮挡，固定表头和浮层可能盖住它。
 
+原生 AX 快照默认深度为 50，子节点数量保持原生默认、不额外限制。模型可按当前任务在独立 `pua_observe(mode="tree" / "both", snapshot_max_depth=...)` 设置 1..62 的单次深度；低深度可能省略可见文字或控件，不能用缺失节点或 `truncated=false` 证明目标不存在。截图中所需信息在树里缺失时，回到 50 重读并按任务范围核对。显式深度成功后恢复会话默认 50；超时或进程中断时记录待恢复设置，在后续原生查询 / 动作前恢复。普通观察、动作后的观察及列表采集默认都使用 50。
+
+微信通讯录 / 会话列表读取慢时，按需读取 [微信长列表说明](references/wechat.md)；微博「消息 → 动态」慢时读取 [微博动态说明](references/weibo.md)。其他 App 的慢树、输出截断或可见文字缺失，按需读取 [App 场景与增补方法](references/app-snapshots.md)，区分深度、输出预算和自绘缺标签；新增 `references/<app>.md` 后补按需入口，不把单个页面的参数改成全局默认。
+
 自绘内容、遮挡或缺失标签需要视觉判断时才取截图。截图随同一结果以图片返回，已缩放到适合阅读的尺寸：图像像素乘以 `image.pixel_to_point` 的 `[x, y]` 得到 iPhone 点，不要按原始分辨率或 Mac 屏幕换算。screenshot 跳过 XML；both 同时提供树和图。若 App 出现分享浮层，处理当前状态，不循环重复同一路径截图。
 
 ## 界面异常时先看截图，再决定操作
