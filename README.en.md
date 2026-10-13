@@ -12,6 +12,17 @@ The plugin sends anonymous usage statistics to its own PostHog project by defaul
 
 **Before using iPhone Use, install, sign, and start WDA Runner on your own iPhone.** WDA is the on-device execution service. The prompt and setup workflow below can help Codex complete the initial installation; a healthy existing WDA can be reused.
 
+## Recent updates
+
+October 9–13, 2026. See the [changelog](CHANGELOG.md) for details.
+
+- **Direct preview control**: tap the image, drag with the mouse, or scroll with two fingers on a trackpad.
+- **WeChat tap improvements**: use screenshots to tap known navigation targets, with lighter reads for contacts and conversation lists.
+- **AirDrop file transfer**: new usage-skill guidance for sending phone photos, videos, and documents to your Mac.
+- **Screen reading improvements**: leaner trees, a 200-node default output limit, and optional snapshot limits for large lists.
+- **Connection recovery improvements**: clearer timeout and disconnect guidance, with automatic restoration of temporary snapshot settings.
+- **Safer long-text continuation**: input stays bound to the original field and stops when the app or focus changes.
+
 ## Ask Codex to install it
 
 Paste this prompt into Codex running on your Mac:
