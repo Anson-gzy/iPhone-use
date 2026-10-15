@@ -17,8 +17,7 @@ import time
 import uuid
 
 HOST = "us.i.posthog.com"
-EVENTS = frozenset(("iphone_use_session_started", "iphone_use_tool_called",
-                    "iphone_use_ready_result", "iphone_use_setup_result", "iphone_use_screen_action"))
+EVENTS = frozenset(("iphone_use_session_started", "iphone_use_tool_called"))
 TOOLS = frozenset("pua_" + op for op in (
     "doctor", "setup", "ready", "metrics", "observe", "find", "tap", "swipe", "type_text",
     "press_button", "launch_app", "wait", "scroll_find", "collect_list", "apps", "batch", "screen", "screen_action"))
@@ -37,7 +36,7 @@ ENUMS = {
     "ready_state": {"ready", "recovering", "recovery_required", "not_ready", "error"},
     "setup_action": {"discover", "fetch", "configure", "build", "start", "stop", "status"},
     "setup_state": {"success", "queued", "running", "completed", "failed", "error", "other"},
-    "screen_action": {"open", "pause", "resume", "refresh", "home", "screenshot"},
+    "screen_action": {"open", "pause", "resume", "refresh", "home", "screenshot", "tap", "drag"},
 }
 NUMBERS = {"duration_ms": 3600000, "batch_size": 20}
 
@@ -140,7 +139,8 @@ class Analytics:
                         "app_surface": "local_mcp", "source": "codex_plugin_mcp",
                         "$lib": "iphone-use-mcp", "$process_person_profile": False,
                         "$geoip_disable": True, "session_id": self.session_id,
-                        "platform": platform.system(), "environment": environment(), **safe_properties(properties),
+                        "platform": platform.system(), "environment": environment(),
+                        "analytics_schema_version": 2, **safe_properties(properties),
                     },
                 })
                 if self.worker is None:
@@ -190,6 +190,11 @@ class Analytics:
     def tool_result(self, name, args, result, duration_ms, error=None):
         if name not in TOOLS:
             return
+        controls = args if isinstance(args, dict) else {}
+        # Automatic geometry recovery is polling, not a user interaction. Exclude
+        # it before start() so an idle preview cannot create a usage session.
+        if name == "pua_screen_action" and controls.get("action") == "viewport":
+            return
         self.start()
         data = result if isinstance(result, dict) else {}
         failure = error or data.get("error")
@@ -202,20 +207,18 @@ class Analytics:
         code = failure if isinstance(failure, str) and failure in ERRORS else ("other" if outcome == "error" else "none")
         fields = {"tool_name": name, "outcome": outcome, "error_code": code, "duration_ms": duration_ms}
         # Only inspect explicitly bounded controls; never serialize args or result.
-        controls = args if isinstance(args, dict) else {}
         if name == "pua_batch" and isinstance(controls.get("steps"), list):
             fields["batch_size"] = len(controls["steps"])
-        self.capture("iphone_use_tool_called", **fields)
         if name == "pua_ready":
             state = "error" if outcome == "error" else ("ready" if data.get("ready") is True else data.get("state", "not_ready"))
             fields["ready_state"] = state if state in ENUMS["ready_state"] else "not_ready"
-            self.capture("iphone_use_ready_result", **fields)
         elif name == "pua_setup":
             state = "error" if outcome == "error" else data.get("state", "success")
-            self.capture("iphone_use_setup_result", **fields, setup_action=controls.get("action"),
-                         setup_state=state if state in ENUMS["setup_state"] else "other")
+            fields.update(setup_action=controls.get("action"),
+                          setup_state=state if state in ENUMS["setup_state"] else "other")
         elif name in ("pua_screen", "pua_screen_action"):
-            self.capture("iphone_use_screen_action", **fields, screen_action=controls.get("action", "open"))
+            fields["screen_action"] = controls.get("action", "open")
+        self.capture("iphone_use_tool_called", **fields)
 
     def close(self, timeout=1.5):
         with self.lock:

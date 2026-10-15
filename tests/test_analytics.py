@@ -1,4 +1,6 @@
 import concurrent.futures
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
@@ -11,7 +13,7 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "server"))
 from analytics import Analytics, anonymous_id, project_token, safe_properties, send_batch
-from iphone_use import Runtime, VERSION
+from iphone_use import Runtime, VERSION, serve
 from wda_client import WDAError
 
 
@@ -61,7 +63,8 @@ class AnalyticsTests(unittest.TestCase):
                           duration_ms=float("nan"), batch_size=9999,
                           text="private-input", selector={"label": "private-label"}, udid="device-id",
                           screenshot="pixels", error_code="private-error", distinct_id="email",
-                          app_version="private-override", session_id="private-session", environment="production")
+                          app_version="private-override", session_id="private-session", environment="production",
+                          analytics_schema_version=999)
         self.assertFalse(analytics.capture("private-event"))
         analytics.close()
         self.assertEqual(len(self.events), 1)
@@ -75,6 +78,7 @@ class AnalyticsTests(unittest.TestCase):
         self.assertFalse(event["properties"]["$process_person_profile"])
         self.assertTrue(event["properties"]["$geoip_disable"])
         self.assertEqual(event["properties"]["environment"], "test")
+        self.assertEqual(event["properties"]["analytics_schema_version"], 2)
         self.assertEqual(safe_properties({"duration_ms": -10, "batch_size": True}), {"duration_ms": 0})
 
     def test_retries_share_event_uuid_and_nonretryable_errors_stop(self):
@@ -104,11 +108,57 @@ class AnalyticsTests(unittest.TestCase):
         analytics.tool_result("pua_setup", {"action": "build", "team_id": "private"}, {"ok": False, "error": "private"}, 3)
         analytics.tool_result("pua_screen", {"action": "pause"}, {}, 3)
         analytics.close()
+        self.assertEqual(len(self.events), 7)  # One usage start and exactly six calls.
         self.assertEqual(sum(e["event"] == "iphone_use_session_started" for e in self.events), 1)
         tools = [e["properties"] for e in self.events if e["event"] == "iphone_use_tool_called"]
         self.assertEqual([e["outcome"] for e in tools], ["success", "pending", "error", "pending", "error", "success"])
         self.assertEqual(tools[2]["error_code"], "other")
+        self.assertEqual([tools[0]["ready_state"], tools[1]["ready_state"]], ["ready", "recovering"])
+        self.assertEqual((tools[4]["setup_action"], tools[4]["setup_state"]), ("build", "error"))
+        self.assertEqual(tools[5]["screen_action"], "pause")
         self.assertNotIn("private", json.dumps(self.events))
+
+    def test_idle_mcp_handshakes_create_no_events_or_identity(self):
+        # Exercise the actual MCP handshake/catalog path across independent runtimes.
+        for _ in range(3):
+            runtime = Runtime(self.directory)
+            runtime.analytics = self.analytics()
+            requests = [{"jsonrpc": "2.0", "id": i, "method": method, "params": {}}
+                        for i, method in enumerate(("initialize", "initialize", "ping", "tools/list", "resources/list"))]
+            output = io.StringIO()
+            with patch("sys.stdin", io.StringIO("".join(json.dumps(r) + "\n" for r in requests))), contextlib.redirect_stdout(output):
+                serve(runtime)
+            replies = [json.loads(line) for line in output.getvalue().splitlines()]
+            self.assertEqual(len(replies), len(requests))
+            self.assertTrue(all("result" in reply for reply in replies))
+            self.assertIsNone(runtime.analytics.worker)
+            runtime.close()
+        self.assertEqual(self.events, [])
+        self.assertFalse((self.directory / "analytics-id").exists())
+
+    def test_viewport_polling_never_starts_usage_or_emits_events(self):
+        runtime = Runtime(self.directory)
+        runtime.analytics = self.analytics()
+        self.addCleanup(runtime.close)
+        with patch.object(runtime, "_dispatch", return_value={"viewport": {"width": 390, "height": 844}}):
+            for _ in range(1000):
+                runtime.call("pua_screen_action", {"action": "viewport"})
+        with patch.object(runtime, "_dispatch", side_effect=WDAError("pua_unreachable", "private")):
+            with self.assertRaises(WDAError):
+                runtime.call("pua_screen_action", {"action": "viewport"})
+        self.assertIsNone(runtime.analytics.worker)
+        self.assertFalse((self.directory / "analytics-id").exists())
+        # A real call starts usage exactly once, including a failed first call.
+        with patch.object(runtime, "_dispatch", side_effect=WDAError("not_ready", "private")):
+            with self.assertRaises(WDAError):
+                runtime.call("pua_ready", {})
+        with patch.object(runtime, "_dispatch", return_value={"ok": True}):
+            for action in ("tap", "drag"):
+                runtime.call("pua_screen_action", {"action": action})
+        runtime.analytics.close()
+        self.assertEqual([e["event"] for e in self.events], ["iphone_use_session_started"] + ["iphone_use_tool_called"] * 3)
+        self.assertEqual(self.events[1]["properties"]["ready_state"], "error")
+        self.assertEqual([e["properties"]["screen_action"] for e in self.events[2:]], ["tap", "drag"])
 
     def test_transport_error_categories_are_preserved_without_user_content(self):
         analytics = self.analytics()

@@ -26,8 +26,8 @@ import wda_image
 from analytics import Analytics
 
 PUAError=WDAError
-VERSION="0.3.12"
-SCREEN_URI="ui://iphone-use/phone-0.3.12.html"
+VERSION="0.3.13"
+SCREEN_URI="ui://iphone-use/phone-0.3.13.html"
 # Codex scopes reuse to the host, chat, server and UI resource. A stable result
 # ID keeps repeated READY/open/pause/resume calls in that chat on one panel,
 # including after the MCP process reconnects; no device identifiers are needed.
@@ -743,8 +743,6 @@ def serve(runtime):
                 if method=="initialize":
                     offered=params.get("protocolVersion")
                     result={"protocolVersion":offered if offered in PROTOCOLS else PROTOCOLS[0],"capabilities":{"tools":{"listChanged":False},"resources":{"listChanged":False}},"serverInfo":{"name":"iphone-use","version":VERSION},"instructions":INSTRUCTIONS}
-                    try:runtime.analytics.start()
-                    except Exception:pass
                 elif method=="ping":result={}
                 elif method=="tools/list":result={"tools":TOOLS}
                 elif method=="resources/list":
