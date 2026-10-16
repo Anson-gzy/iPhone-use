@@ -12,7 +12,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "server"))
-from analytics import Analytics, anonymous_id, project_token, safe_properties, send_batch
+from analytics import Analytics, anonymous_id, project_token, safe_properties, send_batch, ga4_config, ga4_payload, send_ga4
 from iphone_use import Runtime, VERSION, serve
 from wda_client import WDAError
 
@@ -32,7 +32,7 @@ class AnalyticsTests(unittest.TestCase):
         def collect(token, events):
             self.events.extend(events)
             return 200
-        analytics = Analytics(self.directory, VERSION, sender or collect, token=token)
+        analytics = Analytics(self.directory, VERSION, sender or collect, token=token, ga4={})
         self.addCleanup(analytics.close)
         return analytics
 
@@ -217,6 +217,82 @@ class AnalyticsTests(unittest.TestCase):
         body = json.loads(call.kwargs["body"])
         self.assertEqual(body["api_key"], "public-token")
         self.assertEqual(body["batch"], [{"event": "example"}])
+        connection.close.assert_called_once()
+
+    def test_ga4_payload_matches_usage_and_excludes_private_fields(self):
+        analytics = self.analytics()
+        analytics.tool_result("pua_ready", {}, {"ready": True}, 12)
+        analytics.tool_result("pua_tap", {"selector": {"label": "private"}}, {}, 42)
+        analytics.close()
+        payload = ga4_payload(self.events)
+        self.assertRegex(payload["client_id"], r"^\d+\.\d+$")
+        self.assertEqual(payload["consent"]["ad_personalization"], "DENIED")
+        self.assertEqual(len(payload["events"]), 3)
+        self.assertEqual([e["params"]["active_use"] for e in payload["events"]], ["no", "yes", "yes"])
+        sessions = {e["params"]["session_id"] for e in payload["events"]}
+        self.assertEqual(len(sessions), 1)
+        self.assertTrue(0 < next(iter(sessions)) <= 2**53 - 1)
+        self.assertNotIn("private", json.dumps(payload))
+        for event in payload["events"]:
+            self.assertLessEqual(len(event["params"]), 25)
+            self.assertNotIn("debug_mode", event["params"])
+            self.assertNotIn("$process_person_profile", event["params"])
+            self.assertGreater(event["params"]["engagement_time_msec"], 0)
+        self.assertEqual(ga4_payload(self.events)["client_id"], payload["client_id"])
+
+    def test_ga4_independent_delivery_has_no_retries_or_idle_events(self):
+        release, waiting = threading.Event(), threading.Event()
+        def posthog(token, events):
+            waiting.set()
+            release.wait(2)
+            return 503
+        ga4_events = []
+        def ga4(config, events):
+            ga4_events.extend(events)
+            return 503
+        analytics = Analytics(self.directory, VERSION, sender=posthog, token="test",
+                              ga4={"measurementId": "G-TEST", "apiSecret": "test"}, ga4_sender=ga4)
+        self.addCleanup(analytics.close)
+        analytics.tool_result("pua_screen_frame", {}, {}, 1)
+        analytics.tool_result("pua_screen_action", {"action": "viewport"}, {}, 1)
+        self.assertIsNone(analytics.ga4_worker)
+        analytics.tool_result("pua_ready", {}, {"ready": True}, 10)
+        self.assertTrue(waiting.wait(1))
+        analytics.ga4_queue.join()
+        self.assertEqual([e["event"] for e in ga4_events],
+                         ["iphone_use_session_started", "iphone_use_tool_called"])
+        release.set()
+        analytics.close()
+
+    def test_ga4_works_without_posthog_and_respects_global_optout(self):
+        sender = Mock(return_value=204)
+        analytics = Analytics(self.directory, VERSION, token="", ga4={"measurementId": "G-TEST", "apiSecret": "test"}, ga4_sender=sender)
+        self.addCleanup(analytics.close)
+        with patch.dict(os.environ, {"DO_NOT_TRACK": "1"}):
+            analytics.tool_result("pua_ready", {}, {"ready": True}, 1)
+        self.assertIsNone(analytics.ga4_worker)
+        self.assertFalse((self.directory / "analytics-id").exists())
+        analytics.capture("iphone_use_tool_called", tool_name="pua_ready", outcome="success")
+        analytics.close()
+        sender.assert_called_once()
+        self.assertIsNone(analytics.worker)
+
+    def test_ga4_config_overrides_and_https_request(self):
+        with patch.dict(os.environ, {"IPHONE_USE_GA4_MEASUREMENT_ID": "G-TEST", "IPHONE_USE_GA4_API_SECRET": " test "}):
+            self.assertEqual(ga4_config(), {"measurementId": "G-TEST", "apiSecret": "test"})
+        with patch.dict(os.environ, {"IPHONE_USE_GA4_API_SECRET": ""}):
+            self.assertEqual(ga4_config(), {})
+        analytics = self.analytics()
+        analytics.tool_result("pua_ready", {}, {"ready": True}, 1)
+        analytics.close()
+        connection = Mock()
+        connection.getresponse.return_value.status = 204
+        with patch("analytics.http.client.HTTPSConnection", return_value=connection) as factory:
+            self.assertEqual(send_ga4({"measurementId": "G-TEST", "apiSecret": "test secret"}, self.events), 204)
+        factory.assert_called_once_with("www.google-analytics.com", timeout=3)
+        call = connection.request.call_args
+        self.assertEqual(call.args, ("POST", "/mp/collect?measurement_id=G-TEST&api_secret=test+secret"))
+        self.assertEqual(json.loads(call.kwargs["body"]), ga4_payload(self.events))
         connection.close.assert_called_once()
 
 

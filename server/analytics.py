@@ -1,4 +1,4 @@
-"""Anonymous, bounded PostHog delivery using only the Python standard library.
+"""Anonymous, bounded PostHog and GA4 delivery using the standard library.
 
 Never pass phone arguments, observations or exception messages to capture().
 Failures here must never change a phone operation or write to MCP stdout.
@@ -15,6 +15,7 @@ import queue
 import threading
 import time
 import uuid
+from urllib.parse import urlencode
 
 HOST = "us.i.posthog.com"
 EVENTS = frozenset(("iphone_use_session_started", "iphone_use_tool_called"))
@@ -39,6 +40,63 @@ ENUMS = {
     "screen_action": {"open", "pause", "resume", "refresh", "home", "screenshot", "tap", "drag"},
 }
 NUMBERS = {"duration_ms": 3600000, "batch_size": 20}
+
+
+def ga4_config():
+    config = {}
+    for name in ("ga4.json", "ga4.local.json"):
+        try:
+            value = json.loads(Path(__file__).with_name(name).read_text())
+            if isinstance(value, dict):
+                config.update(value)
+        except (OSError, ValueError):
+            pass
+    for key, variable in (("measurementId", "IPHONE_USE_GA4_MEASUREMENT_ID"),
+                          ("apiSecret", "IPHONE_USE_GA4_API_SECRET")):
+        if variable in os.environ:
+            config[key] = os.environ[variable].strip()
+    if not all(isinstance(config.get(key), str) and config[key].strip()
+               for key in ("measurementId", "apiSecret")):
+        return {}
+    return {key: config[key].strip() for key in ("measurementId", "apiSecret")}
+
+
+def ga4_payload(events):
+    """Translate the same sanitized events; never copy arbitrary PostHog fields."""
+    ident = uuid.UUID(events[0]["distinct_id"]).int
+    result = []
+    for event in events:
+        source = event["properties"]
+        params = {key: source[key] for key in (
+            "app_name", "app_version", "app_surface", "source", "platform",
+            "environment", "analytics_schema_version")}
+        params.update(safe_properties(source))
+        params["active_use"] = "yes" if (
+            event["event"] == "iphone_use_tool_called" and params.get("outcome") == "success"
+            and params.get("tool_name") in TOOLS - {"pua_doctor", "pua_setup", "pua_metrics", "pua_screen", "pua_screen_action"}
+        ) else "no"
+        params.update(
+            session_id=int(uuid.UUID(source["session_id"]).hex[:13], 16) + 1,
+            engagement_time_msec=max(1, round(params.get("duration_ms", 1))),
+            event_id=event["uuid"],
+            timestamp_micros=round(datetime.fromisoformat(event["timestamp"]).timestamp() * 1000000),
+        )
+        result.append({"name": event["event"], "params": params})
+    return {"client_id": f"{ident >> 64}.{ident & ((1 << 64) - 1)}",
+            "consent": {"ad_user_data": "DENIED", "ad_personalization": "DENIED"},
+            "events": result}
+
+
+def send_ga4(config, events):
+    query = urlencode({"measurement_id": config["measurementId"], "api_secret": config["apiSecret"]})
+    body = json.dumps(ga4_payload(events), allow_nan=False).encode()
+    connection = http.client.HTTPSConnection("www.google-analytics.com", timeout=3)
+    try:
+        connection.request("POST", "/mp/collect?" + query, body=body,
+                           headers={"Content-Type": "application/json"})
+        return connection.getresponse().status
+    finally:
+        connection.close()
 
 
 def safe_properties(values):
@@ -110,20 +168,24 @@ def send_batch(token, events):
 
 
 class Analytics:
-    def __init__(self, state_dir, version, sender=None, token=None):
+    def __init__(self, state_dir, version, sender=None, token=None, ga4=None, ga4_sender=None):
         self.state_dir, self.version = Path(state_dir), version
         self.token = project_token() if token is None else token
         self.sender = sender or send_batch
+        self.ga4 = ga4_config() if ga4 is None else ga4
+        self.ga4_sender = ga4_sender or send_ga4
         self.ident = None
         self.session_id = str(uuid.uuid4())
         self.queue = queue.Queue(maxsize=256)
+        self.ga4_queue = queue.Queue(maxsize=256)
         self.lock = threading.Lock()
         self.worker = None
+        self.ga4_worker = None
         self.started = False
         self.closed = False
 
     def capture(self, event, **properties):
-        if opted_out() or not self.token or event not in EVENTS:
+        if opted_out() or not (self.token or self.ga4) or event not in EVENTS:
             return False
         try:
             with self.lock:
@@ -131,7 +193,7 @@ class Analytics:
                     return False
                 if self.ident is None:
                     self.ident = anonymous_id(self.state_dir)
-                self.queue.put_nowait({
+                payload = {
                     "event": event, "distinct_id": self.ident, "uuid": str(uuid.uuid4()),
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                     "properties": {
@@ -142,11 +204,25 @@ class Analytics:
                         "platform": platform.system(), "environment": environment(),
                         "analytics_schema_version": 2, **safe_properties(properties),
                     },
-                })
-                if self.worker is None:
-                    self.worker = threading.Thread(target=self._deliver, name="iphone-use-analytics", daemon=True)
-                    self.worker.start()
-            return True
+                }
+                accepted = False
+                for enabled, pending, attribute, ga4 in (
+                    (self.token, self.queue, "worker", False),
+                    (self.ga4, self.ga4_queue, "ga4_worker", True),
+                ):
+                    if not enabled:
+                        continue
+                    try:
+                        pending.put_nowait(payload)
+                        accepted = True
+                    except queue.Full:
+                        continue
+                    if getattr(self, attribute) is None:
+                        worker = threading.Thread(target=self._deliver, args=(ga4,),
+                                                  name="iphone-use-ga4" if ga4 else "iphone-use-posthog", daemon=True)
+                        setattr(self, attribute, worker)
+                        worker.start()
+            return accepted
         except Exception:
             return False
 
@@ -157,10 +233,13 @@ class Analytics:
             self.started = True
         self.capture("iphone_use_session_started")
 
-    def _deliver(self):
+    def _deliver(self, ga4=False):
+        pending = self.ga4_queue if ga4 else self.queue
+        sender = self.ga4_sender if ga4 else self.sender
+        config = self.ga4 if ga4 else self.token
         while True:
             try:
-                first = self.queue.get(timeout=0.1)
+                first = pending.get(timeout=0.1)
             except queue.Empty:
                 if self.closed:
                     return
@@ -168,24 +247,26 @@ class Analytics:
             batch = [first]
             while len(batch) < 20:
                 try:
-                    batch.append(self.queue.get_nowait())
+                    batch.append(pending.get_nowait())
                 except queue.Empty:
                     break
-            for attempt in range(2):
+            # GA4 has no generic event UUID deduplication guarantee. Never retry
+            # an ambiguous request; PostHog retries retain their original UUIDs.
+            for attempt in range(1 if ga4 else 2):
                 if opted_out():
                     break
                 try:
-                    status = self.sender(self.token, batch)
+                    status = sender(config, batch)
                     if 200 <= status < 300 or (status < 500 and status != 429):
                         break
                 except Exception:
                     pass
-                if attempt == 0 and not self.closed:
+                if not ga4 and attempt == 0 and not self.closed:
                     time.sleep(0.2)
                 else:
                     break
             for _ in batch:
-                self.queue.task_done()
+                pending.task_done()
 
     def tool_result(self, name, args, result, duration_ms, error=None):
         if name not in TOOLS:
@@ -223,5 +304,7 @@ class Analytics:
     def close(self, timeout=1.5):
         with self.lock:
             self.closed = True
-        if self.worker is not None:
-            self.worker.join(timeout=timeout)
+        deadline = time.monotonic() + timeout
+        for worker in (self.worker, self.ga4_worker):
+            if worker is not None:
+                worker.join(timeout=max(0, deadline - time.monotonic()))
