@@ -21,7 +21,7 @@ HOST = "us.i.posthog.com"
 EVENTS = frozenset(("iphone_use_session_started", "iphone_use_tool_called"))
 TOOLS = frozenset("pua_" + op for op in (
     "doctor", "setup", "ready", "metrics", "observe", "find", "tap", "swipe", "type_text",
-    "press_button", "launch_app", "wait", "scroll_find", "collect_list", "apps", "batch", "screen", "screen_action"))
+    "press_button", "screenshot", "launch_app", "wait", "scroll_find", "collect_list", "apps", "batch", "screen", "screen_action"))
 ERRORS = frozenset((
     "ambiguous_target", "clipboard_unavailable", "device_busy", "http_error",
     "input_continuation_expired", "input_mismatch", "invalid_argument", "invalid_response",

@@ -26,8 +26,8 @@ import wda_image
 from analytics import Analytics
 
 PUAError=WDAError
-VERSION="0.3.14"
-SCREEN_URI="ui://iphone-use/phone-0.3.14.html"
+VERSION="0.3.15"
+SCREEN_URI="ui://iphone-use/phone-0.3.15.html"
 # Codex scopes reuse to the host, chat, server and UI resource. A stable result
 # ID keeps repeated READY/open/pause/resume calls in that chat on one panel,
 # including after the MCP process reconnects; no device identifiers are needed.
@@ -81,6 +81,7 @@ SCHEMAS={
  "swipe":obj({"direction":string("Finger movement; up usually reveals later rows. Default up.",enum=["up","down","left","right"]),"region":REGION,"observation_id":string("Optional ID from this Runtime; checks app/viewport context, not numeric/carousel text changes or age."),"expect":SEL,"verify":{**VERIFY,"description":"False: one gesture, no XML checks. True: check anchor movement once; failure returns a screenshot before another action. Numeric refresh is not progress."},"max_attempts":{**num(1,2,"integer"),"default":1,"description":"Legacy limit; even 2 stops after the first unproven gesture for screenshot inspection."},"observe":OBS}),
  "type_text":obj({"selector":SEL,"text":string("Full text to enter. Required with selector unless continue_token is given.",max_length=10000),"allow_newlines":BOOL,"submit":BOOL,"replace":BOOL,"verify":{**VERIFY,"description":"Default false enters the full intended text once without value readback. True checks exact value and stops before submit on mismatch. Secure fields require user takeover."},**EXPECT,"continue_token":string("Token from a result with input_complete=false. Pass it alone to type the rest of that text with its original options.",max_length=64)}),
  "press_button":obj({"name":string(enum=["home","volumeup","volumedown"]),"verify":VERIFY,**EXPECT},("name",)),
+ "screenshot":obj({}),
  "launch_app":obj({"bundle_id":string(),"verify":VERIFY,**EXPECT},("bundle_id",)),
  "wait":obj({"selector":SEL,"timeout_seconds":num(0,20)},("selector",)),
  "scroll_find":obj({"selector":SEL,"direction":string("Finger movement; up usually reveals later rows.",enum=["up","down","left","right"]),"max_swipes":{**num(0,10,"integer"),"default":1,"description":"0 only queries; positive legacy limits allow at most one swipe, then an unresolved target returns a screenshot for the next decision."}},("selector",)),
@@ -110,8 +111,9 @@ DESCRIPTIONS={
  "find":"Query selector fields or a PUA predicate directly without a whole tree. Returns matches in tree order with index, type, texts and rect; this tool's selector documents the fields every selector accepts.",
  "tap":"Tap the element a selector resolves to after on-screen and hittable checks, or tap point coordinates with optional contextual observation_id. If the selector fails, the error returns a screenshot and tap points: tap by x/y in the next call instead of trying other selectors. Executes once optimistically; expect opts into a postcondition. Request tree/both if the next decision needs the new page.",
  "swipe":"One gesture; default verify=false/observe=none skips XML checks. verify=true checks geometry once; failure returns a screenshot even with none/tree, without another gesture. Inspect it before acting; no progress does not prove list completeness.",
- "type_text":"Enter the full intended Unicode text into an editable nonsecure field; no short-text trial or mandatory readback. Omit selector to type into the field that already has keyboard focus, which is how to continue after a selector failed: tap the field by x/y, then type. Send the whole text in one call: long text is typed in bounded requests, and a result with input_complete=false returns a continue_token to pass alone in the next call, after which verify/submit/expect/observe run. verify=true opts into exact readback before submit; expect opts into a page postcondition. Newlines need explicit intent; submit defaults false. Never replay uncertain input/submission.",
+ "type_text":"Enter the full intended Unicode text once into an editable nonsecure field; no test fragments. Omit selector for the focused field, including after a coordinate tap. Long input returns input_complete=false: pass only continue_token until complete; verify/submit/expect/observe run afterward. verify=true checks exact readback before submit; expect checks the page. Newlines require explicit intent; submit defaults false. Never replay uncertain input/submission.",
  "press_button":"Home uses the dedicated PUA homescreen endpoint once; default skips foreground polling. verify=true checks SpringBoard for Home, expect can check a page. Volume effects cannot be semantically verified.",
+ "screenshot":"Take an iOS system screenshot into iPhone Photos; find it there or in the app's photo picker. Never replay an uncertain capture.",
  "launch_app":"Activate once using a resolved bundle ID, optimistically by default. verify=true polls foreground up to five seconds; expect checks the intended page. Request observation for the next decision. Never blindly replay uncertain activation.",
  "wait":"Bounded semantic presence polling for expected target. Presence is a UI postcondition, not proof of business correctness.",
  "batch":"Up to 20 known steps in one model round trip. Routine unverified actions continue optimistically with intermediate observe=none. Stops on actual error, failed explicit check, uncertainty, submission without an explicit result expectation, unfinished long input (input_continues) or the per-call time budget (time_budget); continue from stopped_at without repeating completed steps. Observe the last step when the next decision needs page context.",
@@ -184,6 +186,7 @@ for tool in TOOLS:
         tool["annotations"].update(readOnlyHint=False,destructiveHint=False,idempotentHint=True)
     if tool["name"][len("pua_"):] in APP_TOOLS:tool["_meta"]={"ui":{"visibility":["app"]}}
     if tool["name"]=="pua_screen_action":tool["annotations"].update(readOnlyHint=False,destructiveHint=True,idempotentHint=False)
+    if tool["name"]=="pua_screenshot":tool["annotations"]["destructiveHint"]=False
 
 
 def validate(value,schema,path="arguments"):
@@ -587,7 +590,7 @@ class Runtime:
                 if args.get("reset"):
                     self.client.clear_metrics();self.phone.tool_records.clear();self.responses.clear();self._replied_at=None
                 return result
-            if op in ("tap","swipe","type_text","launch_app","press_button","batch","scroll_find","collect_list"):
+            if op in ("tap","swipe","type_text","launch_app","press_button","screenshot","batch","scroll_find","collect_list"):
                 if self.client.request("GET","/wda/locked").get("value") is not False:raise WDAError("phone_locked","Unlock the iPhone yourself before operations; observe again afterward.")
             return getattr(self.phone,op)(**args)
         except WDAError as exc:

@@ -197,12 +197,13 @@ These changes reduce duplicate requests and model round trips. Overall task spee
 
 ## Tools
 
-There are 17 model tools and 2 additional widget-only tools.
+There are 18 model tools and 2 additional widget-only tools.
 
 | Tools | Purpose |
 | --- | --- |
 | `pua_doctor`, `pua_setup`, `pua_ready` | Diagnostics, configuration, background installation / startup, readiness |
-| `pua_observe`, `pua_find` | Trees, screenshots, and target queries |
+| `pua_observe`, `pua_find` | Trees, observation screenshots, and target queries |
+| `pua_screenshot` | Take an iOS system screenshot into iPhone Photos for use or sharing on the phone |
 | `pua_apps`, `pua_launch_app` | App identifiers, installation evidence, app launch |
 | `pua_tap`, `pua_swipe`, `pua_press_button` | Taps, swipes, and device buttons |
 | `pua_type_text`, `pua_wait` | Unicode input and bounded waits |

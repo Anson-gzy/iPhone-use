@@ -191,12 +191,13 @@ sh scripts/install.sh
 
 ## 工具概览
 
-模型可用 17 个工具，另有 2 个仅供屏幕 widget 使用的工具。
+模型可用 18 个工具，另有 2 个仅供屏幕 widget 使用的工具。
 
 | 工具 | 用途 |
 | --- | --- |
 | `pua_doctor`、`pua_setup`、`pua_ready` | 环境诊断、设备配置、后台安装 / 启动与就绪检查 |
-| `pua_observe`、`pua_find` | 控件树、截图与目标查询 |
+| `pua_observe`、`pua_find` | 控件树、观察截图与目标查询 |
+| `pua_screenshot` | 触发 iOS 系统截屏并存入手机相册，供手机内发送、上传或使用 |
 | `pua_apps`、`pua_launch_app` | 查询 App 标识、读取安装证据和启动 App |
 | `pua_tap`、`pua_swipe`、`pua_press_button` | 点击、滑动、主屏幕等操作 |
 | `pua_type_text`、`pua_wait` | Unicode 输入与有界等待 |
